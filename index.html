@@ -77,9 +77,53 @@
                 }
 
                 const terraformPolicy = [{
-                    version: jsonData.Version || "2012-10-17",
-                    statements: jsonData.Statement || []
+                    version: jsonData.Version || null,
+                    statements: []
                 }];
+                if (terraformPolicy[0].version === null) {
+                    delete terraformPolicy[0].version;
+                }
+
+                jsonData.Statement.forEach(statement => {
+                    const terraformStatement = {};
+                    if (statement.Sid) terraformStatement.sid = statement.Sid;
+                    if (statement.Effect) terraformStatement.effect = statement.Effect;
+                    if (statement.Action) terraformStatement.actions = Array.isArray(statement.Action) ? statement.Action : [statement.Action];
+                    if (statement.NotAction) terraformStatement.not_actions = Array.isArray(statement.NotAction) ? statement.NotAction : [statement.NotAction];
+                    if (statement.Resource) terraformStatement.resources = Array.isArray(statement.Resource) ? statement.Resource : [statement.Resource];
+                    if (statement.NotResource) terraformStatement.not_resources = Array.isArray(statement.NotResource) ? statement.NotResource : [statement.NotResource];
+
+                    const conditions = [];
+                    if (statement.Condition) {
+                        for (const test in statement.Condition) {
+                            for (const variable in statement.Condition[test]) {
+                                const values = statement.Condition[test][variable];
+                                conditions.push({ test: test, variable: variable, values: Array.isArray(values) ? values : [values] });
+                            }
+                        }
+                    }
+                    if (conditions.length > 0) terraformStatement.conditions = conditions;
+
+                    const principals = [];
+                    if (statement.Principal) {
+                        for (const type in statement.Principal) {
+                            const identifiers = statement.Principal[type];
+                            principals.push({ type: type, identifiers: Array.isArray(identifiers) ? identifiers : [identifiers] });
+                        }
+                    }
+                    if (principals.length > 0) terraformStatement.principals = principals;
+
+                    const not_principals = [];
+                    if (statement.NotPrincipal) {
+                        for (const type in statement.NotPrincipal) {
+                            const identifiers = statement.NotPrincipal[type];
+                            not_principals.push({ type: type, identifiers: Array.isArray(identifiers) ? identifiers : [identifiers] });
+                        }
+                    }
+                    if (not_principals.length > 0) terraformStatement.not_principals = not_principals;
+
+                    terraformPolicy[0].statements.push(terraformStatement);
+                });
 
                 const formattedOutput = formatTerraformOutput(terraformPolicy);
                 outputElement.textContent = formattedOutput;
@@ -97,35 +141,49 @@
             policyData.forEach(policy => {
                 output += "  {\n";
                 for (const key in policy) {
-                    if (key === 'statements') {
-                        output += "    statements = [\n";
-                        policy.statements.forEach((statement, index, array) => {
-                            output += "      {\n";
-                            for (const statementKey in statement) {
-                                const value = statement[statementKey];
-                                if (Array.isArray(value)) {
-                                    output += `        ${statementKey} = [\n`;
-                                    value.forEach(item => {
-                                        output += `          "${item}",\n`; // Assuming simple string arrays for actions/resources
-                                    });
-                                    output += "        ],\n";
-                                } else {
-                                    output += `        ${statementKey} = "${value}",\n`;
+                    if (policy[key] !== null && (key !== 'statements' || policy[key].length > 0)) {
+                        output += `    ${key} = `;
+                        if (key === 'statements') {
+                            output += "[\n";
+                            policy.statements.forEach((statement, index, array) => {
+                                output += "      {\n";
+                                for (const stmtKey in statement) {
+                                    const value = statement[stmtKey];
+                                    if (value !== null && (typeof value !== 'object' || Array.isArray(value) ? value.length > 0 : Object.keys(value).length > 0)) {
+                                        output += `        ${stmtKey} = `;
+                                        if (Array.isArray(value) && value.every(item => typeof item === 'object' && item !== null)) {
+                                            output += "[\n";
+                                            value.forEach(item => {
+                                                output += "          {\n";
+                                                for (const itemKey in item) {
+                                                    output += `            ${itemKey} = ` + (Array.isArray(item[itemKey]) ? `["${item[itemKey].join('", "')}"]` : `"${item[itemKey]}"`) + ",\n";
+                                                }
+                                                output = output.slice(0, -2) + "\n          },\n";
+                                            });
+                                            output += "        ],\n";
+                                        } else if (Array.isArray(value)) {
+                                            output += `["${value.join('", "')}"],\n`;
+                                        } else if (typeof value === 'string') {
+                                            output += `"${value}",\n`;
+                                        } else {
+                                            output += `${JSON.stringify(value)},\n`;
+                                        }
+                                    }
                                 }
-                            }
-                            output += "      }";
-                            if (index < array.length - 1) {
-                                output += ",\n"; // Add comma between statements
-                            } else {
-                                output += "\n";
-                            }
-                        });
-                        output += "    ],\n";
-                    } else {
-                        output += `    ${key} = "${policy[key]}",\n`;
+                                output = output.rstrip(',\n') + "\n      }";
+                                if (index < array.length - 1) {
+                                    output += ",\n";
+                                } else {
+                                    output += "\n";
+                                }
+                            });
+                            output += "    ],\n";
+                        } else {
+                            output += `"${policy[key]}",\n`;
+                        }
                     }
                 }
-                output += "  },\n";
+                output = output.rstrip(',\n') + "\n  },\n";
             });
             output += "]\n";
             return output;
