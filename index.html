@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JSON to Cloudposse IAM Policy Converter</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            margin: 20px;
+        }
+        textarea {
+            width: 100%;
+            min-height: 150px;
+            margin-bottom: 10px;
+            padding: 8px;
+            box-sizing: border-box;
+            font-family: monospace;
+            font-size: 14px;
+        }
+        button {
+            padding: 10px 15px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            cursor: pointer;
+            border-radius: 5px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        #output {
+            margin-top: 20px;
+            border: 1px solid #ccc;
+            padding: 10px;
+            background-color: #f9f9f9;
+            font-family: monospace;
+            font-size: 14px;
+            white-space: pre-wrap; /* Preserve formatting */
+        }
+        .error {
+            color: red;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <h1>JSON to Cloudposse IAM Policy Converter</h1>
+
+    <div>
+        <label for="jsonInput">Paste your JSON IAM Policy here:</label><br>
+        <textarea id="jsonInput" placeholder='{ "Version": "2012-10-17", "Statement": [...] }'></textarea>
+    </div>
+
+    <button onclick="convertJson()">Convert to Cloudposse Format</button>
+
+    <div id="outputSection" style="margin-top: 20px;">
+        <h2>Output:</h2>
+        <pre id="output"></pre>
+        <p id="error" class="error" style="display: none;"></p>
+    </div>
+
+    <script>
+        function convertJson() {
+            const jsonInput = document.getElementById('jsonInput').value;
+            const outputElement = document.getElementById('output');
+            const errorElement = document.getElementById('error');
+
+            try {
+                const jsonData = JSON.parse(jsonInput);
+
+                if (!jsonData || typeof jsonData !== 'object' || !jsonData.Version || !Array.isArray(jsonData.Statement)) {
+                    errorElement.textContent = "Error: Invalid JSON format. Ensure it has 'Version' and 'Statement' keys.";
+                    errorElement.style.display = 'block';
+                    outputElement.textContent = '';
+                    return;
+                }
+
+                const terraformPolicy = [{
+                    version: jsonData.Version || "2012-10-17",
+                    statements: jsonData.Statement || []
+                }];
+
+                const formattedOutput = formatTerraformOutput(terraformPolicy);
+                outputElement.textContent = formattedOutput;
+                errorElement.style.display = 'none';
+
+            } catch (e) {
+                errorElement.textContent = `Error parsing JSON: ${e.message}`;
+                errorElement.style.display = 'block';
+                outputElement.textContent = '';
+            }
+        }
+
+        function formatTerraformOutput(policyData) {
+            let output = "iam_policy = [\n";
+            policyData.forEach(policy => {
+                output += "  {\n";
+                for (const key in policy) {
+                    if (key === 'statements') {
+                        output += "    statements = [\n";
+                        policy.statements.forEach(statement => {
+                            output += "      {\n";
+                            for (const statementKey in statement) {
+                                const value = statement[statementKey];
+                                if (Array.isArray(value)) {
+                                    output += `        ${statementKey} = [\n`;
+                                    value.forEach(item => {
+                                        output += `          "${item}",\n`; // Assuming simple string arrays for actions/resources
+                                    });
+                                    output += "        ],\n";
+                                } else {
+                                    output += `        ${statementKey} = "${value}",\n`;
+                                }
+                            }
+                            output += "      },\n";
+                        });
+                        output += "    ],\n";
+                    } else {
+                        output += `    ${key} = "${policy[key]}",\n`;
+                    }
+                }
+                output += "  },\n";
+            });
+            output += "]\n";
+            return output;
+        }
+    </script>
+</body>
+</html>
