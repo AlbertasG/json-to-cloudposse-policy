@@ -99,7 +99,7 @@
                 for (const key in policy) {
                     if (key === 'statements') {
                         output += "    statements = [\n";
-                        policy.statements.forEach(statement => {
+                        policy.statements.forEach((statement, index, array) => {
                             output += "      {\n";
                             for (const statementKey in statement) {
                                 const value = statement[statementKey];
@@ -113,7 +113,12 @@
                                     output += `        ${statementKey} = "${value}",\n`;
                                 }
                             }
-                            output += "      },\n";
+                            output += "      }";
+                            if (index < array.length - 1) {
+                                output += ",\n"; // Add comma between statements
+                            } else {
+                                output += "\n";
+                            }
                         });
                         output += "    ],\n";
                     } else {
