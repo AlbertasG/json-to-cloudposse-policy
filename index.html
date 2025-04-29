@@ -69,20 +69,20 @@
             try {
                 const jsonData = JSON.parse(jsonInput);
 
-                if (!jsonData || typeof jsonData !== 'object' || !jsonData.Version || !Array.isArray(jsonData.Statement)) {
-                    errorElement.textContent = "Error: Invalid JSON format. Ensure it has 'Version' and 'Statement' keys.";
+                if (!jsonData || typeof jsonData !== 'object' || !Array.isArray(jsonData.Statement)) {
+                    errorElement.textContent = "Error: Invalid JSON format. Ensure it has a 'Statement' key which is an array.";
                     errorElement.style.display = 'block';
                     outputElement.textContent = '';
                     return;
                 }
 
+                // Cloudposse policy structure is a list of policy objects, even for a single policy
                 const terraformPolicy = [{
-                    version: jsonData.Version || null,
+                    // Only include version if it exists in the input
+                    ...(jsonData.Version && { version: jsonData.Version }),
                     statements: []
                 }];
-                if (terraformPolicy[0].version === null) {
-                    delete terraformPolicy[0].version;
-                }
+
 
                 jsonData.Statement.forEach(statement => {
                     const terraformStatement = {};
@@ -130,64 +130,105 @@
                 errorElement.style.display = 'none';
 
             } catch (e) {
-                errorElement.textContent = `Error parsing JSON: ${e.message}`;
+                errorElement.textContent = `Error parsing JSON or converting: ${e.message}`;
                 errorElement.style.display = 'block';
                 outputElement.textContent = '';
+                console.error(e); // Log the error for debugging
             }
+        }
+
+        // Helper function to remove trailing comma and newline
+        function removeTrailingCommaNewline(str) {
+            if (str.endsWith(',\n')) {
+                return str.slice(0, -2);
+            } else if (str.endsWith(',')) {
+                 return str.slice(0, -1);
+            } else if (str.endsWith('\n')) {
+                return str.slice(0, -1);
+            }
+             return str;
         }
 
         function formatTerraformOutput(policyData) {
             let output = "iam_policy = [\n";
-            policyData.forEach(policy => {
+            policyData.forEach((policy, policyIndex, policyArray) => {
                 output += "  {\n";
-                for (const key in policy) {
-                    if (policy[key] !== null && (key !== 'statements' || policy[key].length > 0)) {
+                const policyKeys = Object.keys(policy);
+                policyKeys.forEach((key, keyIndex, keyArray) => {
+                    const value = policy[key];
+                    if (value !== null && (key !== 'statements' || (Array.isArray(value) && value.length > 0)) && (typeof value !== 'object' || Object.keys(value).length > 0)) {
                         output += `    ${key} = `;
                         if (key === 'statements') {
                             output += "[\n";
-                            policy.statements.forEach((statement, index, array) => {
+                            value.forEach((statement, index, array) => {
                                 output += "      {\n";
-                                for (const stmtKey in statement) {
-                                    const value = statement[stmtKey];
-                                    if (value !== null && (typeof value !== 'object' || Array.isArray(value) ? value.length > 0 : Object.keys(value).length > 0)) {
+                                const statementKeys = Object.keys(statement);
+                                statementKeys.forEach((stmtKey, stmtIndex, stmtArray) => {
+                                    const stmtValue = statement[stmtKey];
+                                     if (stmtValue !== null && (Array.isArray(stmtValue) ? stmtValue.length > 0 : true) && (typeof stmtValue !== 'object' || Object.keys(stmtValue).length > 0)) {
                                         output += `        ${stmtKey} = `;
-                                        if (Array.isArray(value) && value.every(item => typeof item === 'object' && item !== null)) {
+                                        if (Array.isArray(stmtValue) && stmtValue.every(item => typeof item === 'object' && item !== null && !Array.isArray(item))) {
+                                            // Handles list of objects like conditions, principals
                                             output += "[\n";
-                                            value.forEach(item => {
+                                            stmtValue.forEach((item, itemIndex, itemArray) => {
                                                 output += "          {\n";
-                                                for (const itemKey in item) {
-                                                    output += `            ${itemKey} = ` + (Array.isArray(item[itemKey]) ? `["${item[itemKey].join('", "')}"]` : `"${item[itemKey]}"`) + ",\n";
-                                                }
-                                                output = output.slice(0, -2) + "\n          },\n";
+                                                const itemKeys = Object.keys(item);
+                                                itemKeys.forEach((itemKey, itemIndex2, itemArray2) => {
+                                                     const itemValue = item[itemKey];
+                                                    output += `            ${itemKey} = ` + (Array.isArray(itemValue) ? `["${itemValue.join('", "')}"]` : `"${itemValue}"`) + `${itemIndex2 < itemArray2.length - 1 ? ',' : ''}\n`;
+                                                });
+
+                                                output += "          }" + (itemIndex < itemArray.length - 1 ? ',' : '') + "\n";
                                             });
-                                            output += "        ],\n";
-                                        } else if (Array.isArray(value)) {
-                                            output += `["${value.join('", "')}"],\n`;
-                                        } else if (typeof value === 'string') {
-                                            output += `"${value}",\n`;
+                                            output += "        ]" + `${stmtIndex < stmtArray.length - 1 ? ',' : ''}\n`;
+                                        } else if (Array.isArray(stmtValue)) {
+                                            // Handles list of strings like actions, resources
+                                            output += `["${stmtValue.join('", "')}"]` + `${stmtIndex < stmtArray.length - 1 ? ',' : ''}\n`;
+                                        } else if (typeof stmtValue === 'string') {
+                                            output += `"${stmtValue}"` + `${stmtIndex < stmtArray.length - 1 ? ',' : ''}\n`;
                                         } else {
-                                            output += `${JSON.stringify(value)},\n`;
+                                             // Handles boolean/number values if any (though less common in policy statements directly)
+                                            output += `${JSON.stringify(stmtValue)}` + `${stmtIndex < stmtArray.length - 1 ? ',' : ''}\n`;
                                         }
-                                    }
-                                }
-                                output = output.rstrip(',\n') + "\n      }";
-                                if (index < array.length - 1) {
-                                    output += ",\n";
-                                } else {
-                                    output += "\n";
-                                }
+                                     }
+                                });
+                                output += "      }" + (index < array.length - 1 ? ',' : '') + "\n";
                             });
-                            output += "    ],\n";
+                            output += "    ]" + `${keyIndex < keyArray.length - 1 ? ',' : ''}\n`;
+                        } else if (typeof value === 'string') {
+                             // Handles single string values like version, policy_id
+                            output += `"${value}"` + `${keyIndex < keyArray.length - 1 ? ',' : ''}\n`;
                         } else {
-                            output += `"${policy[key]}",\n`;
+                             // Should not happen based on the expected structure, but as a fallback
+                            output += `${JSON.stringify(value)}` + `${keyIndex < keyArray.length - 1 ? ',' : ''}\n`;
                         }
                     }
-                }
-                output = output.rstrip(',\n') + "\n  },\n";
+                });
+
+                output += "  }" + (policyIndex < policyArray.length - 1 ? ',' : '') + "\n";
             });
             output += "]\n";
+
+            // Clean up potential trailing commas before the final closing brackets if logic above fails
+             output = output.replace(/,\n\s*\]/g, '\n  ]'); // Remove trailing comma before ']'
+             output = output.replace(/,\n\s*\}/g, '\n  }'); // Remove trailing comma before '}'
+
+
             return output;
         }
+
+         // Add rstrip polyfill equivalent
+         String.prototype.rstrip = function(chars) {
+             let str = this;
+             if (!chars) {
+                 // Remove whitespace from the end
+                 return str.replace(/\s+$/, '');
+             }
+             // Remove specified characters from the end
+             const regex = new RegExp(`[${chars}]+$`);
+             return str.replace(regex, '');
+         };
+
     </script>
 </body>
 </html>
